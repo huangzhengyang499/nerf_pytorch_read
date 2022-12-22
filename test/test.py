@@ -1,6 +1,8 @@
 import torch
 import configargparse
+import numpy as np
 
+#configargparse使用
 # parse = configargparse.ArgumentParser()
 # parse.add_argument('--config', is_config_file_arg=True, help='config path')
 # parse.add_argument('--test1', type=str, default='hello world', help='write something')
