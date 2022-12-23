@@ -1,6 +1,7 @@
 import torch
 import configargparse
 import numpy as np
+from subprocess import check_output
 
 #configargparse使用
 # parse = configargparse.ArgumentParser()
@@ -12,5 +13,9 @@ import numpy as np
 # print(args.test2)
 
 #查看poses_bounds.npy文件中的内容
-# data = np.load('data/nerf_llff_data/apple/poses_bounds.npy')
+# file_path = r'data\nerf_llff_data\fern\poses_bounds.npy'.replace('\\','/')
+# print(file_path)
+# data = np.load(file_path)
 # print(data.shape)
+
+check_output('cp {}/* {}'.format('data/nerf_llff_data/fern/images', 'test/output'), shell=True)

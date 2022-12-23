@@ -1,13 +1,19 @@
 import numpy as np
-import os, imageio
+# import os, imageio
+import os
+import imageio.v2 as imageio
 
 
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
 
+### 重新规范化图片的分辨率
+# factors=[8]
 def _minify(basedir, factors=[], resolutions=[]):
+    ### 这一段判断文件夹data/nerf_llff_data/fern/images_8是否存在，若已存在则直接返回，不执行之后的代码了
     needtoload = False
     for r in factors:
+        # imgdir = data/nerf_llff_data/fern/images_8
         imgdir = os.path.join(basedir, 'images_{}'.format(r))
         if not os.path.exists(imgdir):
             needtoload = True
@@ -19,29 +25,44 @@ def _minify(basedir, factors=[], resolutions=[]):
         return
     
     from shutil import copy
+    # check_output可以用于执行shell命令
     from subprocess import check_output
     
+    ### 这一段主要用于得到data/nerf_llff_data/fern/images文件夹里所有图片的地址，存在imgs里
+    # imgdir = data/nerf_llff_data/fern/images
     imgdir = os.path.join(basedir, 'images')
+    # 得到images文件夹下所有图片的地址
     imgs = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir))]
     imgs = [f for f in imgs if any([f.endswith(ex) for ex in ['JPG', 'jpg', 'png', 'jpeg', 'PNG']])]
+    # imgdir_orig = data/nerf_llff_data/fern/images
     imgdir_orig = imgdir
     
+    # 得到当前进程的工作目录，wd=C:\Users\huang\Desktop\nerf-pytorch
     wd = os.getcwd()
 
+    ### 这一段
     for r in factors + resolutions:
         if isinstance(r, int):
+            # name = images_8
             name = 'images_{}'.format(r)
+            # resizearg = (100./8)% = 12.5%
             resizearg = '{}%'.format(100./r)
         else:
             name = 'images_{}x{}'.format(r[1], r[0])
             resizearg = '{}x{}'.format(r[1], r[0])
+        
+        # imgdir = data/nerf_llff_data/fern/images_8
         imgdir = os.path.join(basedir, name)
+        # 如果images_8已经存在，则不执行之后的代码
         if os.path.exists(imgdir):
             continue
             
         print('Minifying', r, basedir)
         
+        # 创建文件夹data/nerf_llff_data/fern/images_8
         os.makedirs(imgdir)
+        # check_output用于执行shell命令：cp data/nerf_llff_data/fern/images/* data/nerf_llff_data/fern/images_8
+        # 该指令将images文件夹里的所有东西复制到images_8文件夹中
         check_output('cp {}/* {}'.format(imgdir_orig, imgdir), shell=True)
         
         ext = imgs[0].split('.')[-1]
@@ -60,17 +81,24 @@ def _minify(basedir, factors=[], resolutions=[]):
         
         
 def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
-    
+
+    # 读取poses_bounds.npy得到poses_arr:(N, 17), N为图片数量
+    # 其中，前15个为3*5姿态矩阵，后两个为远/
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
+    # poses:(N, 15)->(N, 3, 5)->(3, 5, N)
     poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
+    # bds:(N, 2)->(2, N)
     bds = poses_arr[:, -2:].transpose([1,0])
     
+    # 从images文件夹里取出第一张图片的地址
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
+    # 得到img0的shape
     sh = imageio.imread(img0).shape
-    
+
     sfx = ''
-    
+
+    # factor是下采样倍数，默认是8
     if factor is not None:
         sfx = '_{}'.format(factor)
         _minify(basedir, factors=[factor])
@@ -316,4 +344,6 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     return images, poses, bds, render_poses, i_test
 
 
-
+if __name__ == "__main__":
+    poses, bds, imgs = _load_data("data/nerf_llff_data/fern", factor=8)
+    
