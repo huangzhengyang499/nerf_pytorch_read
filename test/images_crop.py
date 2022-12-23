@@ -1,6 +1,7 @@
 import os
 from PIL import Image
 
+###################用于将图片裁剪成一样的大小###################
 inputPath = "data/nerf_llff_data/apple/images"
 imgs=[]
 for i in os.listdir(inputPath):

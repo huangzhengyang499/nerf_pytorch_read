@@ -10,3 +10,7 @@ import numpy as np
 # args = parse.parse_args()
 # print(args.test1)
 # print(args.test2)
+
+#查看poses_bounds.npy文件中的内容
+# data = np.load('data/nerf_llff_data/apple/poses_bounds.npy')
+# print(data.shape)
