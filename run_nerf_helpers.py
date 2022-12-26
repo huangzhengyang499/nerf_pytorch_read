@@ -19,26 +19,38 @@ class Embedder:
         
     def create_embedding_fn(self):
         embed_fns = []
+        # 'input_dims' = 3，d = 3
         d = self.kwargs['input_dims']
         out_dim = 0
+        # 'include_input' = True
         if self.kwargs['include_input']:
+            # embed_fns = []
             embed_fns.append(lambda x : x)
             out_dim += d
-            
+
+        # max_freq = multires - 1 = 9
+        # multires:log2 of max freq for positional encoding (3D location)，默认是10
         max_freq = self.kwargs['max_freq_log2']
+        # N_freqs = multires = 10
         N_freqs = self.kwargs['num_freqs']
         
+        # 'log_sampling' = True
         if self.kwargs['log_sampling']:
+            # freq_bands = tensor([1., 2., 4., 8., 16., 32., 64., 128., 256., 512.])
             freq_bands = 2.**torch.linspace(0., max_freq, steps=N_freqs)
         else:
             freq_bands = torch.linspace(2.**0., 2.**max_freq, steps=N_freqs)
-            
+        # out_dim = 63
+        # len(embed_fns) = 21 ，embed_fns中共有21个函数
+        # embed_fns = [x, sin(x), cos(x), sin(2x), cos(2x), ... , sin(512x), cos(512x)]
         for freq in freq_bands:
             for p_fn in self.kwargs['periodic_fns']:
                 embed_fns.append(lambda x, p_fn=p_fn, freq=freq : p_fn(x * freq))
                 out_dim += d
-                    
+        
+        # self.embed_fns = [x, sin(x), cos(x), sin(2x), cos(2x), ... , sin(512x), cos(512x)]
         self.embed_fns = embed_fns
+        # self.out_dim = 63
         self.out_dim = out_dim
         
     def embed(self, inputs):
@@ -59,6 +71,7 @@ def get_embedder(multires, i=0):
     }
     
     embedder_obj = Embedder(**embed_kwargs)
+    # embed = [x, sin(x), cos(x), sin(2x), cos(2x), ... , sin(512x), cos(512x)]
     embed = lambda x, eo=embedder_obj : eo.embed(x)
     return embed, embedder_obj.out_dim
 
@@ -69,17 +82,28 @@ class NeRF(nn.Module):
         """ 
         """
         super(NeRF, self).__init__()
-        self.D = D
-        self.W = W
-        self.input_ch = input_ch
-        self.input_ch_views = input_ch_views
-        self.skips = skips
-        self.use_viewdirs = use_viewdirs
+        self.D = D # 8
+        self.W = W # 256
+        self.input_ch = input_ch # 63
+        self.input_ch_views = input_ch_views # 27
+        self.skips = skips # [4]
+        self.use_viewdirs = use_viewdirs # True
         
+        # pts_linears:
+        # (0): Linear(in_features=63, out_features=256, bias=True)
+        # (1): Linear(in_features=256, out_features=256, bias=True)
+        # (2): Linear(in_features=256, out_features=256, bias=True)
+        # (3): Linear(in_features=256, out_features=256, bias=True)
+        # (4): Linear(in_features=256, out_features=256, bias=True)
+        # (5): Linear(in_features=319, out_features=256, bias=True) 注意这一层的输入
+        # (6): Linear(in_features=256, out_features=256, bias=True)
+        # (7): Linear(in_features=256, out_features=256, bias=True)
         self.pts_linears = nn.ModuleList(
             [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
         
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
+        # views_linears:
+        # (0): Linear(in_features=283, out_features=128, bias=True)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
 
         ### Implementation according to the paper
@@ -87,24 +111,35 @@ class NeRF(nn.Module):
         #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
         
         if use_viewdirs:
+            # Linear(in_features=256, out_features=256, bias=True)
             self.feature_linear = nn.Linear(W, W)
+            # Linear(in_features=256, out_features=1, bias=True)
+            # 用于输出α
             self.alpha_linear = nn.Linear(W, 1)
+            # Linear(in_features=128, out_features=3, bias=True)
+            # 用于输出RGB
             self.rgb_linear = nn.Linear(W//2, 3)
         else:
             self.output_linear = nn.Linear(W, output_ch)
 
+    ### 前向传播
     def forward(self, x):
+        # 把输入的数据分成两份，一份63，一份27，分别对应input_pts和input_views
+        # input_pts是经过位置编码后的3d点位置信息，input_views是经过位置编码后的方位角信息
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
         h = input_pts
         for i, l in enumerate(self.pts_linears):
             h = self.pts_linears[i](h)
             h = F.relu(h)
+            # 第五层的输入又加入了经位置编码后的3d点信息，所以第五层的输入是256+63=319
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
 
         if self.use_viewdirs:
+            # 经位置编码后的3d点信息经前向传播最终输出α
             alpha = self.alpha_linear(h)
             feature = self.feature_linear(h)
+            # 256 + 27 = 283
             h = torch.cat([feature, input_views], -1)
         
             for i, l in enumerate(self.views_linears):
@@ -112,6 +147,7 @@ class NeRF(nn.Module):
                 h = F.relu(h)
 
             rgb = self.rgb_linear(h)
+            # 最终输出4d数据rgbα
             outputs = torch.cat([rgb, alpha], -1)
         else:
             outputs = self.output_linear(h)

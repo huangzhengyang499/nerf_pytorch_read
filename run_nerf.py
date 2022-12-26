@@ -37,9 +37,11 @@ def batchify(fn, chunk):
 def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     """Prepares inputs and applies network 'fn'.
     """
+    # 将输入的3d点信息进行位置编码
     inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
     embedded = embed_fn(inputs_flat)
 
+    # 
     if viewdirs is not None:
         input_dirs = viewdirs[:,None].expand(inputs.shape)
         input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
@@ -178,21 +180,34 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
 def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
+    #  embed_fn = [x, sin(x), cos(x), sin(2x), cos(2x), ... , sin(512x), cos(512x)]
+    # input_ch = 63
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
 
     input_ch_views = 0
     embeddirs_fn = None
+    # args.use_viewdirs = True 
+    # use full 5D input instead of 3D
     if args.use_viewdirs:
+        # args.multires_views = 4
+        # embeddirs_fn = [x, sin(x), cos(x), sin(2x), cos(2x), sin(4x), cos(4x) , sin(8x), cos(8x)]
+        # input_ch_views = 27
         embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
+    # N_importance:number of additional fine samples per ray
+    # N_importance = 64
+    # output_ch = 5
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+    # 得到模型的参数
     grad_vars = list(model.parameters())
 
     model_fine = None
     if args.N_importance > 0:
+        # 分层采样，一个fine model，一个coarse model，这里定义fine model
+        # netdepth_fine = 8，netwidth_fine = 256
         model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
@@ -550,17 +565,22 @@ def train():
 
         if args.llffhold > 0:
             print('Auto LLFF holdout,', args.llffhold)
+            # 若N=20，则i_test = 0 8 16，测试样本的id
             i_test = np.arange(images.shape[0])[::args.llffhold]
 
+        # 验证集和测试机相同
         i_val = i_test
+        # 训练集的id就是排除掉验证集和测试集后剩下的
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
                         (i not in i_test and i not in i_val)])
 
         print('DEFINING BOUNDS')
+        # 如果是360°场景需要用到这个参数
         if args.no_ndc:
             near = np.ndarray.min(bds) * .9
             far = np.ndarray.max(bds) * 1.
-            
+
+        # 定义边界 near = 0. far = 1.
         else:
             near = 0.
             far = 1.
@@ -612,6 +632,8 @@ def train():
     H, W = int(H), int(W)
     hwf = [H, W, focal]
 
+    # K是相机的内参，focal是相机焦距，焦距的物理含义是相机中心到成像平面的距离
+    # 0.5*W是cx，0.5*H是cy，cx和cy是图像原点相对于相机光心的水平和垂直偏移量
     if K is None:
         K = np.array([
             [focal, 0, 0.5*W],
@@ -619,14 +641,18 @@ def train():
             [0, 0, 1]
         ])
 
+    # 此处未设置，使用的是另外生成的螺旋式相机轨迹来进行渲染
     if args.render_test:
         render_poses = np.array(poses[i_test])
 
     # Create log dir and copy the config file
     basedir = args.basedir
     expname = args.expname
+    # 创建文件夹./logs/fern_test
     os.makedirs(os.path.join(basedir, expname), exist_ok=True)
+    # f = ./logs/fern_test/args.txt
     f = os.path.join(basedir, expname, 'args.txt')
+    # 创建参数文件args.txt，并把参数写进去
     with open(f, 'w') as file:
         for arg in sorted(vars(args)):
             attr = getattr(args, arg)
