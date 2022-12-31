@@ -56,18 +56,21 @@ import torch.nn as nn
 #                 out_dim += d
 # print(out_dim)
 # print(len(embed_fns))
-input_ch = 63
-W = 256
-skips = [4]
-D = 8
-input_ch_views = 27
-a = nn.ModuleList(
-            [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
-# print(a)
-# b = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
-# print(b)
-# c = nn.Linear(W, W)
-# print(c)
-for i, l in enumerate(a):
-    print(i)
-    
+# input_ch = 63
+# W = 256
+# skips = [4]
+# D = 8
+# input_ch_views = 27
+# a = nn.ModuleList(
+#             [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
+# # print(a)
+# # b = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+# # print(b)
+# # c = nn.Linear(W, W)
+# # print(c)
+# for i, l in enumerate(a):
+#     print(i)
+# W = 504
+# H = 378
+# i, j = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32), indexing='xy')
+# print(i)

@@ -62,7 +62,7 @@ def get_embedder(multires, i=0):
         return nn.Identity(), 3
     
     embed_kwargs = {
-                'include_input' : True,
+                'include_input' : True, # 把要进行位置编码的数据也包含进来，比如xyz进行位置编码，得到63个数
                 'input_dims' : 3,
                 'max_freq_log2' : multires-1,
                 'num_freqs' : multires,
@@ -124,6 +124,7 @@ class NeRF(nn.Module):
 
     ### 前向传播
     def forward(self, x):
+        # 输入是3d点信息加方位角信息，一体的
         # 把输入的数据分成两份，一份63，一份27，分别对应input_pts和input_views
         # input_pts是经过位置编码后的3d点位置信息，input_views是经过位置编码后的方位角信息
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
@@ -198,6 +199,7 @@ def get_rays(H, W, K, c2w):
     return rays_o, rays_d
 
 
+### 获得以相机中心为起始点，经过相机中心和像素点的射线
 def get_rays_np(H, W, K, c2w):
     i, j = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32), indexing='xy')
     dirs = np.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -np.ones_like(i)], -1)

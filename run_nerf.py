@@ -24,6 +24,8 @@ np.random.seed(0)
 DEBUG = False
 
 
+### 返回的是一个函数，这个函数能对输入数据进行分批处理，并返回处理之后的结果
+### chunk：1024*64
 def batchify(fn, chunk):
     """Constructs a version of 'fn' that applies to smaller batches.
     """
@@ -34,6 +36,7 @@ def batchify(fn, chunk):
     return ret
 
 
+### 对输入数据进行位置编码，并用函数fn对其进行分批处理，每批次为1024*64，返回处理结果
 def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     """Prepares inputs and applies network 'fn'.
     """
@@ -41,13 +44,14 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
     embedded = embed_fn(inputs_flat)
 
-    # 
+    # 将方位角信息进行编码，并和经位置编码后的3d点信息进行整合
     if viewdirs is not None:
         input_dirs = viewdirs[:,None].expand(inputs.shape)
         input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
         embedded_dirs = embeddirs_fn(input_dirs_flat)
         embedded = torch.cat([embedded, embedded_dirs], -1)
 
+    # netchunk:number of pts sent through network in parallel, decrease if running out of memory
     outputs_flat = batchify(fn, netchunk)(embedded)
     outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
     return outputs
@@ -107,10 +111,11 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
         if c2w_staticcam is not None:
             # special case to visualize effect of viewdirs
             rays_o, rays_d = get_rays(H, W, K, c2w_staticcam)
+        # 转成单位向量
         viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
         viewdirs = torch.reshape(viewdirs, [-1,3]).float()
 
-    sh = rays_d.shape # [..., 3]
+    sh = rays_d.shape # [1024, 3]
     if ndc:
         # for forward facing scenes
         rays_o, rays_d = ndc_rays(H, W, K[0][0], 1., rays_o, rays_d)
@@ -122,6 +127,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
     if use_viewdirs:
+        # rays:(1024, 11)
         rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
@@ -213,27 +219,32 @@ def create_nerf(args):
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
         grad_vars += list(model_fine.parameters())
 
+    # network_query_fn是一个函数，这个函数对输入数据进行位置编码，并用函数network_fn对其进行分批处理，每批次为1024*64，返回处理结果
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
                                                                 embed_fn=embed_fn,
                                                                 embeddirs_fn=embeddirs_fn,
                                                                 netchunk=args.netchunk)
 
     # Create optimizer
+    # lrate = 5e-4
     optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
 
     start = 0
-    basedir = args.basedir
-    expname = args.expname
+    basedir = args.basedir # ./logs
+    expname = args.expname # fern_test
 
     ##########################
 
     # Load checkpoints
+    # ft_path = None，specific weights npy file to reload for coarse network
     if args.ft_path is not None and args.ft_path!='None':
         ckpts = [args.ft_path]
     else:
+        # 一开始./logs/fern_test文件夹中是没有tar文件的，所以找不到ckpts
         ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if 'tar' in f]
 
     print('Found ckpts', ckpts)
+    # 如果有已经训练好的参数就加载参数
     if len(ckpts) > 0 and not args.no_reload:
         ckpt_path = ckpts[-1]
         print('Reloading from', ckpt_path)
@@ -251,14 +262,14 @@ def create_nerf(args):
 
     render_kwargs_train = {
         'network_query_fn' : network_query_fn,
-        'perturb' : args.perturb,
-        'N_importance' : args.N_importance,
+        'perturb' : args.perturb, # 1
+        'N_importance' : args.N_importance, # 64
         'network_fine' : model_fine,
-        'N_samples' : args.N_samples,
+        'N_samples' : args.N_samples, # 64
         'network_fn' : model,
-        'use_viewdirs' : args.use_viewdirs,
-        'white_bkgd' : args.white_bkgd,
-        'raw_noise_std' : args.raw_noise_std,
+        'use_viewdirs' : args.use_viewdirs, # True
+        'white_bkgd' : args.white_bkgd, # False
+        'raw_noise_std' : args.raw_noise_std, # 0
     }
 
     # NDC only good for LLFF-style forward facing data
@@ -311,7 +322,9 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
     depth_map = torch.sum(weights * z_vals, -1)
+    # 视差图
     disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+    # 权重和
     acc_map = torch.sum(weights, -1)
 
     if white_bkgd:
@@ -375,6 +388,7 @@ def render_rays(ray_batch,
     else:
         z_vals = 1./(1./near * (1.-t_vals) + 1./far * (t_vals))
 
+    # (1024,64)
     z_vals = z_vals.expand([N_rays, N_samples])
 
     if perturb > 0.:
@@ -393,13 +407,17 @@ def render_rays(ray_batch,
 
         z_vals = lower + (upper - lower) * t_rand
 
+    # 光线出发点+方向*距离
+    # (1024,64,3)，1024条光线，每条光线上64个采样点
     pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
 
 
 #     raw = run_network(pts)
+    # raw:(1024,64,4),4->rgba
     raw = network_query_fn(pts, viewdirs, network_fn)
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
+    # 精细网络部分
     if N_importance > 0:
 
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
@@ -663,7 +681,9 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
+    # 返回训练和测试要用的字典参数、开始的迭代轮次、模型参数、优化器
     render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
+    # 有可能是从中间迭代恢复运行的
     global_step = start
 
     bds_dict = {
@@ -677,6 +697,7 @@ def train():
     render_poses = torch.Tensor(render_poses).to(device)
 
     # Short circuit if only rendering out from trained model
+    # do not optimize, reload weights and render out render_poses path
     if args.render_only:
         print('RENDER ONLY')
         with torch.no_grad():
@@ -687,6 +708,7 @@ def train():
                 # Default is smoother render_poses path
                 images = None
 
+            # ./logs/fern_test/renderonly_path_...
             testsavedir = os.path.join(basedir, expname, 'renderonly_{}_{:06d}'.format('test' if args.render_test else 'path', start))
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
@@ -698,8 +720,8 @@ def train():
             return
 
     # Prepare raybatch tensor if batching random rays
-    N_rand = args.N_rand
-    use_batching = not args.no_batching
+    N_rand = args.N_rand # 1024，每次迭代时光线数量
+    use_batching = not args.no_batching # True
     if use_batching:
         # For random ray batching
         print('get rays')
@@ -711,7 +733,7 @@ def train():
         rays_rgb = np.reshape(rays_rgb, [-1,3,3]) # [(N-1)*H*W, ro+rd+rgb, 3]
         rays_rgb = rays_rgb.astype(np.float32)
         print('shuffle rays')
-        np.random.shuffle(rays_rgb)
+        np.random.shuffle(rays_rgb) # 打乱
 
         print('done')
         i_batch = 0
@@ -724,7 +746,7 @@ def train():
         rays_rgb = torch.Tensor(rays_rgb).to(device)
 
 
-    N_iters = 200000 + 1
+    N_iters = 200000 + 1 # 训练迭代次数
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -740,8 +762,10 @@ def train():
         # Sample random ray batch
         if use_batching:
             # Random over all images
+            # 从所有光线中选出1024条
             batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
             batch = torch.transpose(batch, 0, 1)
+            # batch_rays包含两种数据ro+rd，target_s是rgb值
             batch_rays, target_s = batch[:2], batch[2]
 
             i_batch += N_rand
